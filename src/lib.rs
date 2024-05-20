@@ -17,6 +17,7 @@ use event_listener_strategy::{
 	EventListenerFuture, Strategy,
 };
 use pin_project_lite::pin_project;
+use thiserror::Error;
 
 #[derive(Debug)]
 struct Channel<T> {
@@ -95,7 +96,8 @@ impl<T> Drop for Sender<T> {
 }
 
 /// Stores the [Sender] and the value being sent for reuse after a failed send
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("sending into closed channel")]
 pub struct SendError<T>(Sender<T>, T);
 
 impl<T> SendError<T> {
@@ -152,9 +154,11 @@ impl<T> Drop for Receiver<T> {
 }
 
 /// The sender was dropped, or the value has not yet been sent
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TryRecvError<T> {
+	#[error("receiving from an empty channel")]
 	Empty(Receiver<T>),
+	#[error("receiving from an empty and closed channel")]
 	Closed,
 }
 
@@ -180,8 +184,8 @@ pin_project! {
 	}
 }
 
-/// Stores the [Receiver] for reuse after an failed receive attempt
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Error)]
+#[error("receiving from a closed channel")]
 pub struct RecvError;
 
 impl<T> EventListenerFuture for RecvInner<T> {
