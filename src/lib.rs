@@ -35,10 +35,10 @@ struct Slot<T> {
 
 impl<T> Slot<T> {
 	fn put(&self, val: T) {
-		let slot = self.value.get().cast::<T>();
 		unsafe {
-			ptr::write(slot, val);
+			self.value.get().cast::<T>().write(val);
 		}
+
 		self.sent.store(true, Ordering::Relaxed);
 	}
 
@@ -49,7 +49,7 @@ impl<T> Slot<T> {
 	unsafe fn value(&self) -> T {
 		let slot = self.value.get();
 		let mut value = MaybeUninit::<T>::uninit();
-		ptr::swap(slot, ptr::from_mut(&mut value));
+		slot.swap(ptr::from_mut(&mut value));
 		value.assume_init()
 	}
 }
@@ -224,7 +224,7 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
 	let channel = Arc::new(Channel::<T> {
 		slot: Slot::default(),
 		send: Event::new(),
-		closed: AtomicBool::new(true),
+		closed: AtomicBool::new(false),
 		has_receiver: AtomicBool::new(true),
 	});
 
@@ -290,15 +290,16 @@ mod tests {
 		smol::block_on(async move {
 			let (tx, rx) = channel();
 
-			smol::spawn(async move {
+			let t1 = smol::spawn(async move {
 				assert!(tx.send(42).is_ok());
-			})
-			.detach();
+			});
 
-			smol::spawn(async move {
+			let t2 = smol::spawn(async move {
 				assert!(matches!(rx.recv().await, Ok(42)));
-			})
-			.detach();
+			});
+			
+			t1.await;
+			t2.await;
 		});
 	}
 
@@ -317,15 +318,22 @@ mod tests {
 				.detach();
 			}
 
+			let mut tasks = Vec::new();
+			
 			for (idx, rx) in rxs.into_iter().enumerate() {
-				smol::spawn(async move {
+				let task = smol::spawn(async move {
 					let result = rx.recv().await;
 					assert!(result.is_ok());
 					if let Ok(result) = result {
 						assert_eq!(result, idx);
 					}
-				})
-				.detach();
+				});
+				
+				tasks.push(task);
+			}
+			
+			for task in tasks {
+				task.await;
 			}
 		});
 	}
